@@ -14,6 +14,7 @@ const http = require('node:http');
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
+const { execSync } = require('node:child_process');
 const { DatabaseSync } = require('node:sqlite');
 const XLSX = require('xlsx');
 
@@ -38,9 +39,27 @@ function makeUser(username, password, role) {
   return { username, salt, pass_hash: hashPassword(password, salt), role };
 }
 
+/* ---------------- 云端备份配置（数据库自动备份至 GitHub 私有仓库，数据永久保存） ---------------- */
+const GH_TOKEN = process.env.GH_TOKEN || '';   // GitHub 细粒度 Token（仅需备份仓库的 Contents 读写权限）
+const GH_REPO = process.env.GH_REPO || '';     // 备份仓库，格式：owner/repo
+const DB_FILE = path.join(DATA_DIR, 'archive.db');
+
+/* 数据库打开前：若本地数据库缺失（如平台重新部署后磁盘清空），先从云端恢复最新备份 */
+function restoreFromCloud() {
+  if (!GH_TOKEN || !GH_REPO || fs.existsSync(DB_FILE)) return '';
+  try {
+    execSync(
+      `curl -sfL --max-time 90 -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github.raw" "https://api.github.com/repos/${GH_REPO}/contents/archive.db" -o "${DB_FILE}"`,
+      { stdio: 'ignore' }
+    );
+    return fs.existsSync(DB_FILE) ? `已从云端恢复数据库（${fs.statSync(DB_FILE).size} 字节）` : '云端暂无备份，使用全新数据库';
+  } catch { return '云端恢复失败，使用全新数据库'; }
+}
+const RESTORE_MSG = restoreFromCloud();
+
 /* ---------------- 数据库（永久存储） ---------------- */
 fs.mkdirSync(DATA_DIR, { recursive: true });
-const db = new DatabaseSync(path.join(DATA_DIR, 'archive.db'));
+const db = new DatabaseSync(DB_FILE);
 db.exec(`
 PRAGMA journal_mode = WAL;
 CREATE TABLE IF NOT EXISTS users(
@@ -122,6 +141,41 @@ const q = {
 };
 
 function log(actor, action, detail) { q.insertLog.run(now(), actor, action, detail || ''); }
+if (RESTORE_MSG) log('系统', '云端备份', RESTORE_MSG);
+
+/* 云端备份：数据有变化后自动把数据库文件备份到 GitHub 私有仓库（每 60 秒检查一次） */
+let lastBackupM = 0;
+function dataMtime() {
+  let m = 0;
+  for (const f of [DB_FILE, DB_FILE + '-wal', DB_FILE + '-shm']) {
+    try { m = Math.max(m, fs.statSync(f).mtimeMs); } catch {}
+  }
+  return m;
+}
+async function backupToCloud(manual) {
+  if (!GH_TOKEN || !GH_REPO) return;
+  try {
+    if (!manual && dataMtime() <= lastBackupM + 1) return; // 无变化，跳过
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE);');           // 先把 WAL 合并进主库文件再备份
+    const buf = fs.readFileSync(DB_FILE);
+    const head = { 'Authorization': `Bearer ${GH_TOKEN}`, 'Accept': 'application/vnd.github+json', 'User-Agent': 'grad-archive-system', 'Content-Type': 'application/json' };
+    const meta = await fetch(`https://api.github.com/repos/${GH_REPO}/contents/archive.db`, { headers: head, signal: AbortSignal.timeout(30000) }).then(r => r.ok ? r.json() : null).catch(() => null);
+    const put = await fetch(`https://api.github.com/repos/${GH_REPO}/contents/archive.db`, {
+      method: 'PUT', headers: head, signal: AbortSignal.timeout(30000),
+      body: JSON.stringify({ message: `数据库自动备份 ${now()}`, content: buf.toString('base64'), ...(meta && meta.sha ? { sha: meta.sha } : {}) })
+    });
+    if (put.ok) {
+      lastBackupM = dataMtime();
+      log('系统', '云端备份', `数据库已备份至 GitHub 仓库（${buf.length} 字节）`);
+    } else {
+      console.error(`[${now()}] 云端备份失败: HTTP ${put.status}`);
+    }
+  } catch (e) { console.error(`[${now()}] 云端备份异常:`, e.message); }
+}
+if (GH_TOKEN && GH_REPO) {
+  setInterval(backupToCloud, 60 * 1000);
+  process.on('SIGTERM', () => { backupToCloud(true).finally(() => process.exit(0)); }); // 平台停止实例前先做一次最终备份
+}
 function notify(userId, type, content) { q.insertNotif.run(userId, type, content, now()); }
 function getSetting(key) { const r = q.getSetting.get(key); return r ? r.value : null; }
 function setSetting(key, value) { q.setSetting.run(key, String(value)); }
@@ -495,6 +549,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const pathname = decodeURIComponent(url.pathname);
   try {
+    if (pathname === '/api/health') return sendJSON(res, 200, { ok: true, time: now() }); // 健康检查（保活探测用）
     if (!pathname.startsWith('/api/')) return serveStatic(req, res, pathname);
     for (const r of routes) {
       if (r.method === req.method && r.pattern === pathname) {

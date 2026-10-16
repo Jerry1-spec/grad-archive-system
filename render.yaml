@@ -9,3 +9,7 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 22.14.0
+      - key: GH_REPO
+        value: Jerry1-spec/archive-backup
+      - key: GH_TOKEN
+        sync: false
