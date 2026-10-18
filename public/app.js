@@ -77,9 +77,8 @@ function renderLogin(msg = '') {
       </div>
       ${msg ? `<p style="color:var(--red);font-size:13px;margin-bottom:10px">${esc(msg)}</p>` : ''}
       <button class="btn block" id="lg-btn">登 录</button>
-      <div class="login-tip">
-        默认教务管理员：<b>admin / admin123</b><br>
-        教师账号由教务上传 Excel 后自动创建，初始密码 <b>123456</b>
+      <div class="login-tip" style="color:#888;font-size:12px">
+        教务管理员与教师账号由系统分配，请使用已授权的凭据登录
       </div>
     </div>
   </div>`;
