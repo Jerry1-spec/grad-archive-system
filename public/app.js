@@ -200,7 +200,7 @@ async function refreshAdmin() {
         <h2>上传 Excel 至系统 <span class="hint">解析 Excel 生成归档清单，逐份建档</span></h2>
         <div class="upload-row">
           <input type="file" id="xls-file" accept=".xlsx,.xls">
-          <a class="btn ghost" href="/api/admin/template" download>下载 Excel 模板</a>
+          <button class="btn ghost" id="btn-template">下载 Excel 模板</button>
         </div>
         <div class="import-result" id="import-result">
           <span class="muted" style="font-size:12px">选择 Excel 文件后将自动解析建档</span>
@@ -280,6 +280,7 @@ async function refreshAdmin() {
   fileEl.onchange = () => {
     if (fileEl.files && fileEl.files[0]) doImport(fileEl);
   };
+  document.getElementById('btn-template').onclick = () => downloadTemplate();
   document.getElementById('btn-deadline').onclick = async () => {
     const d = document.getElementById('deadline').value;
     try {
@@ -315,6 +316,24 @@ async function loadLogs() {
   box.innerHTML = r.list.length
     ? r.list.map(l => `<div class="log-row"><span class="t">${esc(l.time)}</span><span class="a">${esc(l.actor)}</span>${esc(l.action)}${l.detail ? ' — ' + esc(l.detail) : ''}</div>`).join('')
     : `<div class="empty-tip">暂无日志</div>`;
+}
+
+async function downloadTemplate() {
+  try {
+    const res = await fetch('/api/admin/template', {
+      headers: TOKEN() ? { Authorization: 'Bearer ' + TOKEN() } : {},
+    });
+    if (!res.ok) throw new Error('下载失败（' + res.status + '）');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '归档清单模板.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) { alert(e.message); }
 }
 
 async function doImport(fileEl) {
