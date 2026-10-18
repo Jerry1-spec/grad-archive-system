@@ -6,7 +6,7 @@ const $modal = document.getElementById('modal-root');
 const TOKEN = () => localStorage.getItem('bdag_token') || '';
 let ME = null;
 let pollTimer = null;
-let adminState = { status: '', teacher: '', kw: '' };
+let adminState = { status: '', teacher: '', kw: '', tab: 'dashboard' };
 
 /* ---------- 基础 ---------- */
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -159,33 +159,54 @@ async function renderAdmin() {
   stopPoll();
   $app.innerHTML = `
     ${topbar(`<button class="btn ghost sm" id="btn-notifs">通知中心</button>`)}
+    <div class="tabbar" id="admin-tabs">
+      <button class="tab" data-tab="dashboard">首页概览</button>
+      <button class="tab" data-tab="records">建档管理</button>
+      <button class="tab" data-tab="remind">催办管理</button>
+      <button class="tab" data-tab="logs">操作日志</button>
+    </div>
     <div class="container" id="admin-body"><div class="card">加载中…</div></div>`;
   bindLogout();
   document.getElementById('btn-notifs').onclick = openNotifs;
+  document.querySelectorAll('#admin-tabs .tab').forEach(b => {
+    b.onclick = () => { adminState.tab = b.dataset.tab; refreshAdmin(); };
+  });
   await refreshAdmin();
-  startPoll(refreshAdmin);
+  startPoll(() => { if (adminState.tab !== 'records') refreshAdmin(); });
+}
+
+function setActiveTab() {
+  document.querySelectorAll('#admin-tabs .tab').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === adminState.tab);
+  });
 }
 
 async function refreshAdmin() {
   let s, recs;
   try {
     s = await api('/admin/summary');
-    const params = new URLSearchParams();
-    if (adminState.status) params.set('status', adminState.status);
-    if (adminState.teacher) params.set('teacher', adminState.teacher);
-    if (adminState.kw) params.set('q', adminState.kw);
-    recs = await api('/admin/records' + (params.toString() ? '?' + params : ''));
+    if (adminState.tab === 'records') {
+      const params = new URLSearchParams();
+      if (adminState.status) params.set('status', adminState.status);
+      if (adminState.teacher) params.set('teacher', adminState.teacher);
+      if (adminState.kw) params.set('q', adminState.kw);
+      recs = await api('/admin/records' + (params.toString() ? '?' + params : ''));
+    }
   } catch (e) { return; }
 
+  setActiveTab();
   const c = s.counts;
   const body = document.getElementById('admin-body');
   if (!body) return;
-  body.innerHTML = `
-    ${s.allSubmitted ? `<div class="banner-done">本届全部归档提交完成，流程结束 ✓（共 ${s.total} 份）</div>` : ''}
-    ${s.deadline ? `<div class="banner-warn">归档截止日：<b>${esc(s.deadline)}</b>。截止日前 7 天起，系统每日自动提醒未归档教师。</div>` : ''}
 
+  const banners = `
+    ${s.allSubmitted ? `<div class="banner-done">本届全部归档提交完成，流程结束 ✓（共 ${s.total} 份）</div>` : ''}
+    ${s.deadline ? `<div class="banner-warn">归档截止日：<b>${esc(s.deadline)}</b>。截止日前 7 天起，系统每日自动提醒未归档教师。</div>` : ''}`;
+
+  if (adminState.tab === 'dashboard') {
+    body.innerHTML = `${banners}
     <div class="card">
-      <h2>总体情况 <span class="hint">首页实时刷新（每 5 秒）</span></h2>
+      <h2>总体情况 <span class="hint">实时刷新（每 5 秒）</span></h2>
       <div class="stats">
         <div class="stat c0"><div class="num">${s.total}</div><div class="lbl">毕设总份数</div></div>
         <div class="stat c1"><div class="num">${c['未提交']}</div><div class="lbl">未提交</div></div>
@@ -194,43 +215,38 @@ async function refreshAdmin() {
         <div class="stat c4"><div class="num">${c['已归档']}</div><div class="lbl">已归档</div></div>
       </div>
     </div>
-
-    <div class="grid-2">
-      <div class="card">
-        <h2>上传 Excel 至系统 <span class="hint">解析 Excel 生成归档清单，逐份建档</span></h2>
-        <div class="upload-row">
-          <input type="file" id="xls-file" accept=".xlsx,.xls">
-          <button class="btn ghost" id="btn-template">下载 Excel 模板</button>
-        </div>
-        <div class="import-result" id="import-result">
-          <span class="muted" style="font-size:12px">选择 Excel 文件后将自动解析建档</span>
-        </div>
-        <div class="section-gap"></div>
-        <h2>可选配置：归档截止日</h2>
-        <div class="upload-row">
-          <input type="date" id="deadline" value="${esc(s.deadline)}">
-          <button class="btn" id="btn-deadline">保存截止日</button>
-        </div>
-        <p class="muted" style="font-size:12px;margin-top:6px">保存后，截止日前 7 天起系统每日自动提醒未归档教师。</p>
+    <div class="card">
+      <h2>快捷入口</h2>
+      <div class="quick-links">
+        <button class="btn" data-tab="records">前往建档管理 →</button>
+        <button class="btn green" data-tab="remind">前往催办管理 →</button>
+        <button class="btn ghost" data-tab="logs">查看操作日志 →</button>
       </div>
+    </div>`;
+    body.querySelectorAll('.quick-links [data-tab]').forEach(b => {
+      b.onclick = () => { adminState.tab = b.dataset.tab; refreshAdmin(); };
+    });
+    return;
+  }
 
-      <div class="card">
-        <h2>催办 <span class="hint">按首页未归名单一键催办（含学生、题目）</span></h2>
-        <div class="upload-row">
-          <button class="btn green" id="btn-remind">一键催办未归档教师（${s.total - c['已归档']} 份未归档）</button>
-        </div>
-        <p class="muted" style="font-size:12px;margin-top:6px">示例：刘老师，您所指导学生葛天白的毕设纸质文档《××××》尚未归档，请尽快办理！</p>
-        <div class="section-gap"></div>
-        <h2>教师账号（上传 Excel 自动创建）</h2>
-        <table>
-          <thead><tr><th>指导教师</th><th>名下份数</th><th>未归档</th></tr></thead>
-          <tbody>
-            ${s.teachers.length ? s.teachers.map(t => `
-              <tr><td>${esc(t.teacher)}</td><td>${t.total}</td><td>${t.unarchived}</td></tr>`).join('')
-              : `<tr><td colspan="3" class="empty-tip">暂无教师，请先上传 Excel</td></tr>`}
-          </tbody>
-        </table>
+  if (adminState.tab === 'records') {
+    body.innerHTML = `${banners}
+    <div class="card">
+      <h2>上传 Excel 至系统 <span class="hint">解析 Excel 生成归档清单，逐份建档</span></h2>
+      <div class="upload-row">
+        <input type="file" id="xls-file" accept=".xlsx,.xls">
+        <button class="btn ghost" id="btn-template">下载 Excel 模板</button>
       </div>
+      <div class="import-result" id="import-result">
+        <span class="muted" style="font-size:12px">选择 Excel 文件后将自动解析建档</span>
+      </div>
+      <div class="section-gap"></div>
+      <h2>可选配置：归档截止日</h2>
+      <div class="upload-row">
+        <input type="date" id="deadline" value="${esc(s.deadline)}">
+        <button class="btn" id="btn-deadline">保存截止日</button>
+      </div>
+      <p class="muted" style="font-size:12px;margin-top:6px">保存后，截止日前 7 天起系统每日自动提醒未归档教师。</p>
     </div>
 
     <div class="card">
@@ -267,46 +283,70 @@ async function refreshAdmin() {
             </tr>`).join('') : `<tr><td colspan="8" class="empty-tip">暂无记录</td></tr>`}
         </tbody>
       </table>
-    </div>
-
-    <div class="card">
-      <h2>操作日志 <span class="hint">全部操作永久留痕，不可删除</span></h2>
-      <div class="logs" id="logs-box"><div class="empty-tip">点击查看</div></div>
-      <button class="btn ghost sm" id="btn-logs" style="margin-top:10px">加载操作日志</button>
     </div>`;
 
-  /* ---- 事件绑定 ---- */
-  const fileEl = document.getElementById('xls-file');
-  fileEl.onchange = () => {
-    if (fileEl.files && fileEl.files[0]) doImport(fileEl);
-  };
-  document.getElementById('btn-template').onclick = () => downloadTemplate();
-  document.getElementById('btn-deadline').onclick = async () => {
-    const d = document.getElementById('deadline').value;
-    try {
-      await api('/admin/deadline', { method: 'POST', body: { deadline: d } });
-      alert(d ? `归档截止日已设置为 ${d}` : '归档截止日已清除');
-      refreshAdmin();
-    } catch (e) { alert(e.message); }
-  };
-  document.getElementById('btn-remind').onclick = () => confirmModal(
-    `将按首页未归名单逐份发送催办通知（未归档 <b>${s.total - c['已归档']}</b> 份），通知内容含学生与题目。确定发送？`,
-    async () => {
-      const r = await api('/admin/remind-all', { method: 'POST' });
-      alert(`已发送 ${r.sent} 条催办通知（未归档 ${r.unarchived} 份）`);
-      refreshAdmin();
-    }, '确认催办', 'btn green');
+    const fileEl = document.getElementById('xls-file');
+    fileEl.onchange = () => { if (fileEl.files && fileEl.files[0]) doImport(fileEl); };
+    document.getElementById('btn-template').onclick = () => downloadTemplate();
+    document.getElementById('btn-deadline').onclick = async () => {
+      const d = document.getElementById('deadline').value;
+      try {
+        await api('/admin/deadline', { method: 'POST', body: { deadline: d } });
+        alert(d ? `归档截止日已设置为 ${d}` : '归档截止日已清除');
+        refreshAdmin();
+      } catch (e) { alert(e.message); }
+    };
+    document.getElementById('f-status').onchange = e => { adminState.status = e.target.value; refreshAdmin(); };
+    document.getElementById('f-teacher').onchange = e => { adminState.teacher = e.target.value; refreshAdmin(); };
+    let kwTimer = null;
+    document.getElementById('f-kw').oninput = e => {
+      clearTimeout(kwTimer);
+      kwTimer = setTimeout(() => { adminState.kw = e.target.value.trim(); refreshAdmin(); }, 400);
+    };
+    body.querySelectorAll('[data-arch]').forEach(b => b.onclick = () => archiveModal(b.dataset.arch, b.dataset.name));
+    body.querySelectorAll('[data-rej]').forEach(b => b.onclick = () => rejectModal(b.dataset.arch, b.dataset.name));
+    return;
+  }
 
-  document.getElementById('f-status').onchange = e => { adminState.status = e.target.value; refreshAdmin(); };
-  document.getElementById('f-teacher').onchange = e => { adminState.teacher = e.target.value; refreshAdmin(); };
-  let kwTimer = null;
-  document.getElementById('f-kw').oninput = e => {
-    clearTimeout(kwTimer);
-    kwTimer = setTimeout(() => { adminState.kw = e.target.value.trim(); refreshAdmin(); }, 400);
-  };
-  body.querySelectorAll('[data-arch]').forEach(b => b.onclick = () => archiveModal(b.dataset.arch, b.dataset.name));
-  body.querySelectorAll('[data-rej]').forEach(b => b.onclick = () => rejectModal(b.dataset.arch, b.dataset.name));
-  document.getElementById('btn-logs').onclick = loadLogs;
+  if (adminState.tab === 'remind') {
+    body.innerHTML = `${banners}
+    <div class="card">
+      <h2>催办 <span class="hint">按未归名单一键催办（含学生、题目）</span></h2>
+      <div class="upload-row">
+        <button class="btn green" id="btn-remind">一键催办未归档教师（${s.total - c['已归档']} 份未归档）</button>
+      </div>
+      <p class="muted" style="font-size:12px;margin-top:6px">示例：刘老师，您所指导学生葛天白的毕设纸质文档《××××》尚未归档，请尽快办理！</p>
+    </div>
+    <div class="card">
+      <h2>教师账号 <span class="hint">上传 Excel 后自动创建，初始密码 123456</span></h2>
+      <table>
+        <thead><tr><th>指导教师</th><th>名下份数</th><th>未归档</th></tr></thead>
+        <tbody>
+          ${s.teachers.length ? s.teachers.map(t => `
+            <tr><td>${esc(t.teacher)}</td><td>${t.total}</td><td>${t.unarchived}</td></tr>`).join('')
+            : `<tr><td colspan="3" class="empty-tip">暂无教师，请先上传 Excel</td></tr>`}
+        </tbody>
+      </table>
+    </div>`;
+    document.getElementById('btn-remind').onclick = () => confirmModal(
+      `将逐份发送催办通知（未归档 <b>${s.total - c['已归档']}</b> 份），通知内容含学生与题目。确定发送？`,
+      async () => {
+        const r = await api('/admin/remind-all', { method: 'POST' });
+        alert(`已发送 ${r.sent} 条催办通知（未归档 ${r.unarchived} 份）`);
+        refreshAdmin();
+      }, '确认催办', 'btn green');
+    return;
+  }
+
+  if (adminState.tab === 'logs') {
+    body.innerHTML = `${banners}
+    <div class="card">
+      <h2>操作日志 <span class="hint">全部操作永久留痕，不可删除</span></h2>
+      <div class="logs" id="logs-box"><div class="empty-tip">点击下方按钮加载</div></div>
+      <button class="btn ghost sm" id="btn-logs" style="margin-top:10px">加载操作日志</button>
+    </div>`;
+    document.getElementById('btn-logs').onclick = loadLogs;
+  }
 }
 
 async function loadLogs() {
