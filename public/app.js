@@ -279,6 +279,7 @@ async function refreshAdmin() {
               <td>${r.status === '已提交' ? `
                 <button class="btn green sm" data-arch="${r.id}" data-name="${esc(r.student)}">合格·归档</button>
                 <button class="btn danger sm" data-rej="${r.id}" data-name="${esc(r.student)}">不合格·退回</button>` : '—'}
+                <button class="btn ghost sm" data-del="${r.id}" data-name="${esc(r.student)}" style="margin-left:4px">删除</button>
               </td>
             </tr>`).join('') : `<tr><td colspan="8" class="empty-tip">暂无记录</td></tr>`}
         </tbody>
@@ -305,6 +306,7 @@ async function refreshAdmin() {
     };
     body.querySelectorAll('[data-arch]').forEach(b => b.onclick = () => archiveModal(b.dataset.arch, b.dataset.name));
     body.querySelectorAll('[data-rej]').forEach(b => b.onclick = () => rejectModal(b.dataset.arch, b.dataset.name));
+    body.querySelectorAll('[data-del]').forEach(b => b.onclick = () => deleteModal(b.dataset.del, b.dataset.name));
     return;
   }
 
@@ -423,6 +425,15 @@ function rejectModal(id, name) {
       await api('/admin/reject', { method: 'POST', body: { id: Number(id), reason: document.getElementById('rj-reason').value } });
       refreshAdmin();
     }, '确认退回', 'btn danger');
+}
+
+function deleteModal(id, name) {
+  confirmModal(
+    `确定删除 <b>${esc(name)}</b> 的归档记录？此操作不可恢复，且会永久删除该条记录。`,
+    async () => {
+      await api('/admin/delete', { method: 'POST', body: { id: Number(id) } });
+      refreshAdmin();
+    }, '确认删除', 'btn danger');
 }
 
 /* ================= 指导教师端 ================= */

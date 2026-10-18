@@ -130,6 +130,7 @@ const q = {
   updateCopyStatus: db.prepare('UPDATE copies SET status=?, return_reason=NULL, submitted_at=? WHERE id=?'),
   updateCopyReturn: db.prepare('UPDATE copies SET status=?, return_reason=? WHERE id=?'),
   updateCopyArchive: db.prepare('UPDATE copies SET status=?, cabinet=?, shelf=?, handler=?, archived_at=? WHERE id=?'),
+  deleteCopy: db.prepare('DELETE FROM copies WHERE id=?'),
   copyUnarchived: db.prepare("SELECT * FROM copies WHERE status != '已归档' ORDER BY teacher, id"),
   batchUnsubmitted: db.prepare("SELECT COUNT(*) c FROM copies WHERE status IN ('未提交','已退回')"),
   batchTotal: db.prepare('SELECT COUNT(*) c FROM copies'),
@@ -477,6 +478,16 @@ route('POST', '/api/admin/archive', async (req, res, user) => {
 route('POST', '/api/admin/reject', async (req, res, user) => {
   if (user.role !== 'admin') return sendJSON(res, 403, { error: '仅教务管理员可访问' });
   await handleReject(req, res, user);
+});
+route('POST', '/api/admin/delete', async (req, res, user) => {
+  if (user.role !== 'admin') return sendJSON(res, 403, { error: '仅教务管理员可访问' });
+  const body = await readJSONBody(req);
+  const id = Number(body.id);
+  const c = q.copyById.get(id);
+  if (!c) return sendJSON(res, 404, { error: '记录不存在' });
+  q.deleteCopy.run(id);
+  log(user.username, '删除记录', `${c.batch}届 ${c.teacher} 指导 ${c.student}《${c.title}》（原状态：${c.status}）`);
+  sendJSON(res, 200, { ok: true });
 });
 route('GET', '/api/admin/logs', async (req, res, user) => {
   if (user.role !== 'admin') return sendJSON(res, 403, { error: '仅教务管理员可访问' });
