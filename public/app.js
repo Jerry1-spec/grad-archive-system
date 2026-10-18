@@ -200,10 +200,11 @@ async function refreshAdmin() {
         <h2>上传 Excel 至系统 <span class="hint">解析 Excel 生成归档清单，逐份建档</span></h2>
         <div class="upload-row">
           <input type="file" id="xls-file" accept=".xlsx,.xls">
-          <button class="btn" id="btn-import">解析并建档</button>
           <a class="btn ghost" href="/api/admin/template" download>下载 Excel 模板</a>
         </div>
-        <div class="import-result" id="import-result"></div>
+        <div class="import-result" id="import-result">
+          <span class="muted" style="font-size:12px">选择 Excel 文件后将自动解析建档</span>
+        </div>
         <div class="section-gap"></div>
         <h2>可选配置：归档截止日</h2>
         <div class="upload-row">
@@ -276,7 +277,9 @@ async function refreshAdmin() {
 
   /* ---- 事件绑定 ---- */
   const fileEl = document.getElementById('xls-file');
-  document.getElementById('btn-import').onclick = () => doImport(fileEl);
+  fileEl.onchange = () => {
+    if (fileEl.files && fileEl.files[0]) doImport(fileEl);
+  };
   document.getElementById('btn-deadline').onclick = async () => {
     const d = document.getElementById('deadline').value;
     try {
@@ -318,6 +321,7 @@ async function doImport(fileEl) {
   const f = fileEl.files && fileEl.files[0];
   const box = document.getElementById('import-result');
   if (!f) { box.innerHTML = '<span class="err">请先选择 Excel 文件（.xlsx / .xls）</span>'; return; }
+  box.innerHTML = `<span class="muted">⏳ 正在解析 <b>${esc(f.name)}</b> ...</span>`;
   try {
     const buf = await f.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array' });
