@@ -328,13 +328,14 @@ async function doImport(fileEl) {
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
     const r = await api('/admin/import', { method: 'POST', body: { rows, filename: f.name } });
-    box.innerHTML = `
+    const resultHtml = `
       ✅ 解析完成：<b>${esc(f.name)}</b><br>
       新建归档 ${r.inserted} 份（${esc(r.batch)} 届），重复跳过 ${r.duplicated} 份，空行 ${r.empty} 行<br>
       ${r.newTeachers.length ? `涉及教师：${r.newTeachers.map(esc).join('、')}（新教师账号初始密码 123456）<br>` : ''}
       ${r.errors.length ? `<span class="err">错误 ${r.errors.length} 行：<br>${r.errors.map(e => esc(e.reason)).join('<br>')}</span>` : '无错误行'}`;
-    fileEl.value = '';
-    refreshAdmin();
+    await refreshAdmin();
+    const box2 = document.getElementById('import-result');
+    if (box2) box2.innerHTML = resultHtml;
   } catch (e) {
     box.innerHTML = `<span class="err">导入失败：${esc(e.message)}</span>`;
   }
