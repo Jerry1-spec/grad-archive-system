@@ -23,6 +23,11 @@ async function api(p, opts = {}) {
   let data = {};
   try { data = await res.json(); } catch {}
   if (res.status === 401 && p !== '/login') { doLogout(true); throw new Error(data.error || '请重新登录'); }
+  if (res.status === 403 && data.code === 'MUST_CHANGE_PASSWORD') {
+    if (ME) ME.must_change_pass = true;
+    renderChangePassword();
+    throw new Error(data.error || '首次登录需先修改密码');
+  }
   if (!res.ok) throw new Error(data.error || '请求失败（' + res.status + '）');
   return data;
 }
@@ -91,12 +96,61 @@ function renderLogin(msg = '') {
       const r = await api('/login', { method: 'POST', body: { username, password, role } });
       localStorage.setItem('bdag_token', r.token);
       ME = r.user;
-      enter();
+      if (ME.must_change_pass) renderChangePassword();
+      else enter();
     } catch (e) { renderLoginMsg(e.message); }
   };
   const renderLoginMsg = m => { const el = document.getElementById('lg-err'); if (el) el.textContent = m; else renderLogin(m); };
   document.getElementById('lg-btn').onclick = doLogin;
   $app.querySelectorAll('#lg-pass').forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); }));
+}
+
+/* ---------- 首次登录强制修改密码 ---------- */
+function renderChangePassword(msg = '') {
+  stopPoll();
+  $app.innerHTML = `
+  <div class="login-wrap">
+    <div class="login-card">
+      <h1>首次登录 · 修改密码</h1>
+      <div class="sub">${esc(ME ? ME.username : '')}，您的初始密码为系统统一分配，为保障账号安全，请先设置个人密码后继续使用。</div>
+      <div class="form-item">
+        <label>原密码（初始密码 123456）</label>
+        <input id="cp-old" type="password" autocomplete="current-password" placeholder="请输入原密码">
+      </div>
+      <div class="form-item">
+        <label>新密码（至少 6 位，不能为 123456）</label>
+        <input id="cp-new" type="password" autocomplete="new-password" placeholder="请输入新密码">
+      </div>
+      <div class="form-item">
+        <label>确认新密码</label>
+        <input id="cp-new2" type="password" autocomplete="new-password" placeholder="请再次输入新密码">
+      </div>
+      ${msg ? `<p id="cp-err" style="color:var(--red);font-size:13px;margin-bottom:10px">${esc(msg)}</p>` : '<p id="cp-err" style="color:var(--red);font-size:13px;margin-bottom:10px"></p>'}
+      <button class="btn block" id="cp-btn">确认修改并进入系统</button>
+      <div class="login-tip" style="color:#888;font-size:12px">
+        <button class="btn ghost sm" id="cp-logout" style="margin-top:10px">退出登录</button>
+      </div>
+    </div>
+  </div>`;
+  const err = m => { const el = document.getElementById('cp-err'); if (el) el.textContent = m; };
+  const submit = async () => {
+    const oldPassword = document.getElementById('cp-old').value;
+    const newPassword = document.getElementById('cp-new').value;
+    const confirm = document.getElementById('cp-new2').value;
+    if (!oldPassword || !newPassword) return err('请填写原密码和新密码');
+    if (newPassword.length < 6) return err('新密码至少 6 位');
+    if (newPassword !== confirm) return err('两次输入的新密码不一致');
+    try {
+      await api('/change-password', { method: 'POST', body: { oldPassword, newPassword } });
+      if (ME) ME.must_change_pass = false;
+      enter();
+    } catch (e) { err(e.message); }
+  };
+  document.getElementById('cp-btn').onclick = submit;
+  document.getElementById('cp-logout').onclick = () => doLogout(false);
+  ['cp-old', 'cp-new', 'cp-new2'].forEach(id => {
+    document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+  });
 }
 
 async function doLogout(silent) {
@@ -110,6 +164,7 @@ function startPoll(fn) { stopPoll(); pollTimer = setInterval(fn, 5000); }
 
 function enter() {
   if (!ME) return;
+  if (ME.must_change_pass) return renderChangePassword();
   if (ME.role === 'admin') renderAdmin();
   else renderTeacher();
 }

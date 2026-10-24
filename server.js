@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS users(
   pass_hash TEXT NOT NULL,
   salt TEXT NOT NULL,
   role TEXT NOT NULL CHECK(role IN ('admin','teacher')),
+  must_change_pass INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions(
@@ -108,10 +109,25 @@ CREATE INDEX IF NOT EXISTS idx_copies_teacher ON copies(teacher);
 CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id);
 `);
 
+/* 数据库结构升级：users 增加 must_change_pass（首次登录须改密） */
+{
+  const cols = db.prepare("PRAGMA table_info('users')").all().map(c => c.name);
+  if (!cols.includes('must_change_pass')) {
+    db.exec('ALTER TABLE users ADD COLUMN must_change_pass INTEGER NOT NULL DEFAULT 0');
+  }
+  // 历史教师账号若仍使用初始密码 123456，则要求首次登录修改
+  const legacy = db.prepare("SELECT id, salt FROM users WHERE role='teacher' AND must_change_pass=0").all();
+  const setFlag = db.prepare('UPDATE users SET must_change_pass=1 WHERE id=?');
+  for (const u of legacy) {
+    if (hashPassword('123456', u.salt) === db.prepare('SELECT pass_hash FROM users WHERE id=?').get(u.id).pass_hash) setFlag.run(u.id);
+  }
+}
+
 const q = {
   userByName: db.prepare('SELECT * FROM users WHERE username = ?'),
   userById: db.prepare('SELECT * FROM users WHERE id = ?'),
-  insertUser: db.prepare('INSERT INTO users(username, pass_hash, salt, role, created_at) VALUES (?,?,?,?,?)'),
+  insertUser: db.prepare('INSERT INTO users(username, pass_hash, salt, role, must_change_pass, created_at) VALUES (?,?,?,?,?,?)'),
+  updatePassword: db.prepare('UPDATE users SET pass_hash=?, salt=?, must_change_pass=0 WHERE id=?'),
   insertSession: db.prepare('INSERT INTO sessions(token, user_id, created_at) VALUES (?,?,?)'),
   sessionByToken: db.prepare('SELECT * FROM sessions WHERE token = ?'),
   deleteSession: db.prepare('DELETE FROM sessions WHERE token = ?'),
@@ -184,7 +200,7 @@ function setSetting(key, value) { q.setSetting.run(key, String(value)); }
 /* 初始化管理员账号（仅首次） */
 if (q.userByName.get('admin') == null) {
   const u = makeUser('admin', 'admin123', 'admin');
-  q.insertUser.run(u.username, u.pass_hash, u.salt, u.role, now());
+  q.insertUser.run(u.username, u.pass_hash, u.salt, u.role, 0, now());
   log('系统', '初始化', '创建默认教务管理员账号 admin（密码 admin123）');
 }
 
@@ -212,7 +228,7 @@ function auth(req) {
   const sess = q.sessionByToken.get(m[1]);
   if (!sess) return null;
   const u = q.userById.get(sess.user_id);
-  return u ? { id: u.id, username: u.username, role: u.role } : null;
+  return u ? { id: u.id, username: u.username, role: u.role, must_change_pass: !!u.must_change_pass } : null;
 }
 
 /* ---------------- 业务：Excel 导入（解析 Excel 生成归档清单，逐份建档） ---------------- */
@@ -256,7 +272,7 @@ async function handleImport(req, res, user) {
     newTeachers.get(t).push(`${s}《${ti}》`);
     if (!q.userByName.get(t)) {
       const u = makeUser(t, '123456', 'teacher');
-      q.insertUser.run(u.username, u.pass_hash, u.salt, u.role, now());
+      q.insertUser.run(u.username, u.pass_hash, u.salt, u.role, 1, now());
       log('系统', '创建教师账号', `${t}（初始密码 123456）`);
     }
   }
@@ -415,7 +431,24 @@ route('POST', '/api/login', async (req, res) => {
   const token = crypto.randomBytes(24).toString('hex');
   q.insertSession.run(token, u.id, now());
   log(u.username, '登录系统', `角色：${u.role === 'admin' ? '教务管理员' : '指导教师'}`);
-  sendJSON(res, 200, { token, user: { id: u.id, username: u.username, role: u.role } });
+  sendJSON(res, 200, { token, user: { id: u.id, username: u.username, role: u.role, must_change_pass: !!u.must_change_pass } });
+});
+
+/* 修改密码（首次登录强制改密也走此接口） */
+route('POST', '/api/change-password', async (req, res, user) => {
+  const body = await readJSONBody(req);
+  const oldPass = String(body.oldPassword || '');
+  const newPass = String(body.newPassword || '');
+  const u = q.userById.get(user.id);
+  if (!u) return sendJSON(res, 401, { error: '账号不存在' });
+  if (hashPassword(oldPass, u.salt) !== u.pass_hash) return sendJSON(res, 400, { error: '原密码不正确' });
+  if (newPass.length < 6) return sendJSON(res, 400, { error: '新密码至少 6 位' });
+  if (newPass === '123456') return sendJSON(res, 400, { error: '新密码不能使用初始密码 123456' });
+  if (newPass === oldPass) return sendJSON(res, 400, { error: '新密码不能与原密码相同' });
+  const salt = crypto.randomBytes(16).toString('hex');
+  q.updatePassword.run(hashPassword(newPass, salt), salt, u.id);
+  log(u.username, '修改密码', '首次登录/主动修改密码成功');
+  sendJSON(res, 200, { ok: true });
 });
 
 route('GET', '/api/me', async (req, res, user) => {
@@ -567,6 +600,11 @@ const server = http.createServer(async (req, res) => {
         if (r.pattern !== '/api/login') {
           const user = auth(req);
           if (!user) return sendJSON(res, 401, { error: '未登录或登录已过期，请重新登录' });
+          // 首次登录未改密时，仅允许改密/查询自身/退出
+          const open = ['/api/change-password', '/api/me', '/api/logout'];
+          if (user.must_change_pass && !open.includes(pathname)) {
+            return sendJSON(res, 403, { error: '首次登录需先修改密码', code: 'MUST_CHANGE_PASSWORD' });
+          }
           await r.handler(req, res, user);
         } else {
           await r.handler(req, res);
