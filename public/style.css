@@ -132,6 +132,7 @@ tr:hover td { background: #fafcff; }
 .notif .tag.green { background: #dcfce7; color: #15803d; }
 .notif .msg { flex: 1; line-height: 1.55; }
 .notif .time { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.notif .notif-del { flex-shrink: 0; align-self: flex-start; font-size: 12px; padding: 3px 8px; }
 
 /* 工具行 */
 .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }

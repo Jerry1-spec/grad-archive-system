@@ -197,16 +197,29 @@ function notifListHTML(list) {
     <div class="notif">
       <span class="tag ${notifTagClass(n.type)}">${esc(n.type)}</span>
       <div class="msg">${esc(n.content)}<div class="time">${esc(n.created_at)}</div></div>
+      <button class="btn ghost sm notif-del" data-ndel="${n.id}" title="删除该通知">删除</button>
     </div>`).join('');
 }
-async function openNotifs() {
+async function openNotifs() { await renderNotifsModal(); }
+async function renderNotifsModal() {
   const r = await api('/notifications');
   showModal('通知中心（含催办 / 提醒 / 完成通知）', `
     <div style="max-height:380px;overflow:auto;border:1px solid var(--border);border-radius:8px">
       ${notifListHTML(r.list)}
     </div>
-    <p class="muted" style="font-size:12px;margin-top:8px">共 ${r.list.length} 条，未读 ${r.unread} 条。通知将永久保留在服务器中。</p>`,
+    <p class="muted" style="font-size:12px;margin-top:8px">共 ${r.list.length} 条，未读 ${r.unread} 条。可点击每条右侧「删除」自行删除。</p>`,
     async () => { try { await api('/notifications/read', { method: 'POST' }); } catch {} }, '全部标为已读');
+  bindNotifDelete();
+}
+function bindNotifDelete() {
+  $modal.querySelectorAll('[data-ndel]').forEach(b => {
+    b.onclick = async () => {
+      try {
+        await api('/notifications/delete', { method: 'POST', body: { id: Number(b.dataset.ndel) } });
+        await renderNotifsModal();
+      } catch (e) { alert(e.message); }
+    };
+  });
 }
 
 /* ================= 教务管理员端 ================= */

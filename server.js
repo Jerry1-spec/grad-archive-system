@@ -137,6 +137,7 @@ const q = {
   notifsOf: db.prepare('SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 200'),
   notifUnread: db.prepare('SELECT COUNT(*) c FROM notifications WHERE user_id = ? AND read = 0'),
   notifReadAll: db.prepare('UPDATE notifications SET read = 1 WHERE user_id = ?'),
+  notifDelete: db.prepare('DELETE FROM notifications WHERE id = ? AND user_id = ?'),
   insertLog: db.prepare('INSERT INTO logs(time, actor, action, detail) VALUES (?,?,?,?)'),
   logsAll: db.prepare('SELECT * FROM logs ORDER BY id DESC LIMIT 300'),
   getSetting: db.prepare('SELECT value FROM settings WHERE key = ?'),
@@ -466,6 +467,14 @@ route('GET', '/api/notifications', async (req, res, user) => {
 });
 route('POST', '/api/notifications/read', async (req, res, user) => {
   q.notifReadAll.run(user.id);
+  sendJSON(res, 200, { ok: true });
+});
+route('POST', '/api/notifications/delete', async (req, res, user) => {
+  const body = await readJSONBody(req);
+  const id = Number(body.id);
+  const info = q.notifDelete.run(id, user.id);
+  if (!info.changes) return sendJSON(res, 404, { error: '通知不存在或无权删除' });
+  log(user.username, '删除通知', `通知 ID：${id}`);
   sendJSON(res, 200, { ok: true });
 });
 
